@@ -92,6 +92,7 @@ jobs:
           flavor: latest=auto
           tags: |
             type=semver,pattern={{version}}
+            type=ref,event=tag
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}},enable=${{ !startsWith(github.ref_name, 'v0.') }}
             type=sha,format=long

@@ -82,7 +82,7 @@ history. Or use a tool like
 Download [deploy/helm/values.yaml](../deploy/helm/values.yaml). Change the
 lines marked `CHANGE ME`:
 
-- `tag`: the webhook version, for example `v0.1.0`
+- `tag`: the webhook version, for example `0.1.0` (image tags have no `v`)
 - `DOMAIN_FILTER` and `domainFilters`: your domain
 - `txtOwnerId`: any name for this cluster, for example `prod-cluster`. If two
   clusters write to the same zone, each needs its own name.
@@ -164,7 +164,7 @@ Every image is signed. To check that it was built by this project's GitHub
 workflow, install [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) and run:
 
 ```sh
-cosign verify ghcr.io/hayone1/external-dns-contabo-webhook:v0.1.0 \
+cosign verify ghcr.io/hayone1/external-dns-contabo-webhook:0.1.0 \
   --certificate-identity-regexp '^https://github.com/hayone1/external-dns-contabo-webhook/.github/workflows/release.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

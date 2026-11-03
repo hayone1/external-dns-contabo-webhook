@@ -11,7 +11,7 @@ Pushing a tag like `v0.2.0` on `main` starts `.github/workflows/release.yml`:
 3. **Builds** the image for `linux/amd64` and `linux/arm64`.
 4. **Pushes** it to Docker Hub (`hayone/external-dns-contabo-webhook`) and
    GHCR (`ghcr.io/hayone1/external-dns-contabo-webhook`) with these tags:
-   `0.2.0`, `0.2`, `latest` (only for normal releases), `sha-<commit>`.
+   `0.2.0`, `v0.2.0`, `0.2`, `latest` (only for normal releases), `sha-<commit>`.
    From `v1.0.0` on, a `1` tag is added too.
 5. **Signs** both images with cosign (keyless, through GitHub's OIDC token).
 6. **Attaches** an SBOM and build provenance, and a GitHub attestation.

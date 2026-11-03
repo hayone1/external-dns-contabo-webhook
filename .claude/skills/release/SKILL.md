@@ -32,12 +32,12 @@ scans with Trivy, creates the GitHub release and updates the Docker Hub page.
 ## Check the result
 
 ```sh
-docker buildx imagetools inspect ghcr.io/hayone1/external-dns-contabo-webhook:vX.Y.Z
-cosign verify ghcr.io/hayone1/external-dns-contabo-webhook:vX.Y.Z \
+docker buildx imagetools inspect ghcr.io/hayone1/external-dns-contabo-webhook:X.Y.Z
+cosign verify ghcr.io/hayone1/external-dns-contabo-webhook:X.Y.Z \
   --certificate-identity-regexp '^https://github.com/hayone1/external-dns-contabo-webhook/.github/workflows/release.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
-gh attestation verify oci://ghcr.io/hayone1/external-dns-contabo-webhook:vX.Y.Z --repo hayone1/external-dns-contabo-webhook
-docker run --rm docker.io/hayone/external-dns-contabo-webhook:vX.Y.Z version
+gh attestation verify oci://ghcr.io/hayone1/external-dns-contabo-webhook:X.Y.Z --repo hayone1/external-dns-contabo-webhook
+docker run --rm docker.io/hayone/external-dns-contabo-webhook:X.Y.Z version
 ```
 
 ## If something fails

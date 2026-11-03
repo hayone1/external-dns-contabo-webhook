@@ -44,7 +44,7 @@ Not security problems (open a normal issue instead):
 You can check that an image really came from this repository:
 
 ```sh
-cosign verify ghcr.io/hayone1/external-dns-contabo-webhook:v0.1.0 \
+cosign verify ghcr.io/hayone1/external-dns-contabo-webhook:0.1.0 \
   --certificate-identity-regexp '^https://github.com/hayone1/external-dns-contabo-webhook/.github/workflows/release.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
