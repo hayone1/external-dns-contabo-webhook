@@ -258,6 +258,8 @@ jobs:
   # "insufficient scope"). Add such a token as the secret
   # DOCKERHUB_DESCRIPTION_TOKEN of the "release" environment to keep the page
   # in sync; without it this job is skipped with a notice.
+  # The job only borrows the environment's secrets. "deployment: false" keeps it
+  # out of the deployment history, so only the image push counts as a deployment.
   dockerhub-description:
     name: Docker Hub description
     needs: dockerhub
@@ -266,7 +268,9 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-    environment: release
+    environment:
+      name: release
+      deployment: false
     steps:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
