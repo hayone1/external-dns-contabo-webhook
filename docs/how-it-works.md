@@ -38,9 +38,27 @@ So the webhook translates:
 
 ## The order of changes
 
-Inside each zone the webhook does **deletes first, then updates, then
-creates**. That way a name can switch from an A record to a CNAME: the A
-record is gone before the CNAME arrives, and Contabo does not complain.
+The webhook works in this order:
+
+1. delete records
+2. delete their ownership TXT records (see below)
+3. update records
+4. create ownership TXT records
+5. create records
+
+Deleting first lets a name switch from an A record to a CNAME: the A record
+is gone before the CNAME arrives, and Contabo does not complain.
+
+The ownership steps protect you during Contabo outages:
+
+- If a record cannot be deleted, its ownership record is **kept**. external-dns
+  still knows it owns the record and deletes it on a later loop.
+- If an ownership record cannot be created, the record it belongs to is
+  **not created** yet. Otherwise external-dns would see a record it does not
+  own and would never touch it again.
+
+Without this, a short outage could leave a record behind that points to an
+address you no longer use, and nothing would ever clean it up.
 
 ## Fresh data every time
 

@@ -54,13 +54,16 @@ Run `make test` and `make lint` before you say a change is done.
    `AdjustEndpoints` must produce exactly what `Records` returns.
 5. **One bad record must not block the rest.** `ApplyChanges` keeps going and
    returns all errors at the end.
-6. **Idempotent writes.** Create of an existing record and delete of a missing
+6. **Ownership first, ownership last.** Ownership TXT records are created
+   before their records and deleted after them; a record must never exist
+   without its ownership record (see `ApplyChanges`).
+7. **Idempotent writes.** Create of an existing record and delete of a missing
    record are both success.
-7. **Plain language in docs.** Write for a 9th grader: short sentences, explain
+8. **Plain language in docs.** Write for a 9th grader: short sentences, explain
    terms, give copy-paste examples.
-8. **Do not mention specific domain registrars** in docs or code. Say "your
+9. **Do not mention specific domain registrars** in docs or code. Say "your
    domain registrar".
-9. **Pin GitHub Actions by full commit SHA** with the version in a comment.
+10. **Pin GitHub Actions by full commit SHA** with the version in a comment.
    Every job sets its own minimal `permissions`.
 
 ## Contabo API facts that surprise people

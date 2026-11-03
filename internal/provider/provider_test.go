@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -446,5 +447,124 @@ func TestGetDomainFilter(t *testing.T) {
 	df := f.p.GetDomainFilter()
 	if !df.Match("www.example.com") || df.Match("www.example.org") {
 		t.Fatal("domain filter not passed through")
+	}
+}
+
+func ownershipTXT(name, resource string) *endpoint.Endpoint {
+	return endpoint.NewEndpointWithTTL(name, "TXT", ttl(300),
+		`"heritage=external-dns,external-dns/owner=test,external-dns/resource=`+resource+`"`)
+}
+
+func withResource(ep *endpoint.Endpoint, resource string) *endpoint.Endpoint {
+	ep.Labels[endpoint.ResourceLabelKey] = resource
+	return ep
+}
+
+// Seen on the real API: DELETE returned HTTP 500 for a while. If the record
+// delete fails but its ownership record is deleted, the record is left
+// behind and external-dns can never clean it up.
+func TestApplyChangesKeepsOwnershipWhenDeleteFails(t *testing.T) {
+	f := newFixture(t, Options{}, "example.com")
+	webID := f.seed("example.com", "www", "A", "1.1.1.1", 300)
+	f.seed("example.com", "extdns-a.www", "TXT", `"heritage=external-dns,external-dns/owner=test,external-dns/resource=service/ns/web"`, 300)
+	f.seed("example.com", "api", "A", "1.1.1.1", 300)
+	f.seed("example.com", "extdns-a.api", "TXT", `"heritage=external-dns,external-dns/owner=test,external-dns/resource=service/ns/api"`, 300)
+	f.srv.Inject(contabotest.Fault{Method: "DELETE", Path: fmt.Sprintf("/records/%d", webID), Status: 500, Count: 100})
+
+	err := f.p.ApplyChanges(ctx(), &plan.Changes{Delete: []*endpoint.Endpoint{
+		// The registry sends the ownership record first; order must not matter.
+		ownershipTXT("extdns-a.www.example.com", "service/ns/web"),
+		withResource(endpoint.NewEndpoint("www.example.com", "A", "1.1.1.1"), "service/ns/web"),
+		ownershipTXT("extdns-a.api.example.com", "service/ns/api"),
+		withResource(endpoint.NewEndpoint("api.example.com", "A", "1.1.1.1"), "service/ns/api"),
+	}})
+	if err == nil {
+		t.Fatal("expected an error for the failed delete")
+	}
+	got := f.records(t)
+	if got["www.example.com/A"] == nil || got["extdns-a.www.example.com/TXT"] == nil {
+		t.Fatalf("www and its ownership record must both stay: %v", got)
+	}
+	if got["api.example.com/A"] != nil || got["extdns-a.api.example.com/TXT"] != nil {
+		t.Fatalf("api and its ownership record should be gone: %v", got)
+	}
+
+	// The outage ends; the next loop cleans up the rest.
+	f.srv.ClearFaults()
+	err = f.p.ApplyChanges(ctx(), &plan.Changes{Delete: []*endpoint.Endpoint{
+		ownershipTXT("extdns-a.www.example.com", "service/ns/web"),
+		withResource(endpoint.NewEndpoint("www.example.com", "A", "1.1.1.1"), "service/ns/web"),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.records(t); len(got) != 0 {
+		t.Fatalf("records left: %v", got)
+	}
+}
+
+func TestApplyChangesSkipsRecordWhenOwnershipCreateFails(t *testing.T) {
+	f := newFixture(t, Options{}, "example.com")
+	f.srv.Inject(contabotest.Fault{Method: "POST", BodyContains: "service/ns/web", Status: 500, Count: 100})
+
+	err := f.p.ApplyChanges(ctx(), &plan.Changes{Create: []*endpoint.Endpoint{
+		// Records first in the list: the provider must still create the
+		// ownership record first.
+		withResource(endpoint.NewEndpointWithTTL("www.example.com", "A", ttl(300), "1.1.1.1"), "service/ns/web"),
+		withResource(endpoint.NewEndpointWithTTL("api.example.com", "A", ttl(300), "1.1.1.1"), "service/ns/api"),
+		ownershipTXT("extdns-a.www.example.com", "service/ns/web"),
+		ownershipTXT("extdns-a.api.example.com", "service/ns/api"),
+	}})
+	if err == nil || !strings.Contains(err.Error(), "ownership record") {
+		t.Fatalf("expected an ownership error, got %v", err)
+	}
+	got := f.records(t)
+	if got["www.example.com/A"] != nil {
+		t.Fatal("www must not be created without its ownership record")
+	}
+	if got["api.example.com/A"] == nil || got["extdns-a.api.example.com/TXT"] == nil {
+		t.Fatalf("api should be created normally: %v", got)
+	}
+}
+
+func TestPlainTXTIsNotOwnership(t *testing.T) {
+	if isOwnershipRecord(endpoint.NewEndpoint("x.example.com", "TXT", `"v=spf1 -all"`)) {
+		t.Fatal("a normal TXT record is not an ownership record")
+	}
+	if !isOwnershipRecord(ownershipTXT("a-x.example.com", "service/ns/x")) {
+		t.Fatal("ownership record not detected")
+	}
+}
+
+func TestOwnershipMatches(t *testing.T) {
+	rec := func(name, res string) *endpoint.Endpoint {
+		ep := endpoint.NewEndpoint(name, "A", "1.1.1.1")
+		if res != "" {
+			ep.Labels[endpoint.ResourceLabelKey] = res
+		}
+		return ep
+	}
+	plain := func(name string) *endpoint.Endpoint {
+		return endpoint.NewEndpoint(name, "TXT", `"heritage=external-dns,external-dns/owner=test"`)
+	}
+	tests := []struct {
+		txt  *endpoint.Endpoint
+		rec  *endpoint.Endpoint
+		want bool
+	}{
+		{ownershipTXT("extdns-a.www.example.com", "service/ns/web"), rec("www.example.com", "service/ns/web"), true},
+		{ownershipTXT("extdns-a.www.example.com", "service/ns/web"), rec("www.example.com", "service/ns/other"), false},
+		{ownershipTXT("extdns-a.www.example.com", "service/ns/web"), rec("api.example.com", "service/ns/web"), false},
+		{ownershipTXT("a-www.example.com", "service/ns/web"), rec("www.example.com", "service/ns/web"), true},
+		{ownershipTXT("extdns-a.wildcard.apps.example.com", "service/ns/w"), rec("*.apps.example.com", "service/ns/w"), true},
+		{ownershipTXT("extdns-a.example.com", "service/ns/apex"), rec("example.com", "service/ns/apex"), true},
+		{plain("extdns-a.www.example.com"), rec("www.example.com", ""), true},
+		{plain("extdns-a.www.example.com"), rec("www.example.com", "service/ns/web"), true},
+		{plain("extdns-a.notwww.example.com"), rec("www.example.com", ""), false},
+	}
+	for i, tt := range tests {
+		if got := ownershipMatches(tt.txt, tt.rec); got != tt.want {
+			t.Errorf("case %d: ownershipMatches(%s, %s) = %v, want %v", i, tt.txt.DNSName, tt.rec.DNSName, got, tt.want)
+		}
 	}
 }

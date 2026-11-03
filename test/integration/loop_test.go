@@ -14,6 +14,7 @@ import (
 	"context"
 	"net/http/httptest"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -322,5 +323,48 @@ func TestTransientErrorsRecover(t *testing.T) {
 	}
 	if n := h.run(desired); n != 0 {
 		t.Fatalf("not stable after recovery: %d changes", n)
+	}
+}
+
+// Reproduces an outage seen on the real API: DELETE returned HTTP 500 for a
+// while. The record must keep its ownership record, so that external-dns
+// still owns it and deletes it once the API recovers.
+func TestDeleteOutageLeavesNothingBehind(t *testing.T) {
+	h := newHarness(t, &plan.SyncPolicy{}, nil)
+	h.converge(eps(
+		endpoint.NewEndpoint("www.example.com", "A", "1.1.1.1"),
+		endpoint.NewEndpoint("*.apps.example.com", "A", "1.1.1.1"),
+	))
+	// Make every delete of the wildcard record fail.
+	for _, r := range h.api.Records(zone) {
+		if r.Name != nil && strings.HasPrefix(*r.Name, "*.") && r.Type == "A" {
+			h.api.Inject(contabotest.Fault{Method: "DELETE", Path: "/records/" + strconv.FormatInt(r.RecordID, 10), Status: 500, Count: 1000})
+		}
+	}
+	h.run(eps())
+	if h.errs == 0 {
+		t.Fatal("expected the delete to fail")
+	}
+	if !h.has(zone, "*.apps.example.com A 1.1.1.1") {
+		t.Fatal("the wildcard record should still be there during the outage")
+	}
+	owned := false
+	for _, l := range h.dns(zone) {
+		if strings.HasPrefix(l, "extdns-a.wildcard.apps.example.com TXT") {
+			owned = true
+		}
+	}
+	if !owned {
+		t.Fatalf("the ownership record of the wildcard was deleted, so it is orphaned: %v", h.dns(zone))
+	}
+
+	h.api.ClearFaults()
+	h.errs = 0
+	h.run(eps())
+	if left := h.dns(zone); len(left) != 0 {
+		t.Fatalf("records left after the outage: %v", left)
+	}
+	if n := h.run(eps()); n != 0 || h.errs != 0 {
+		t.Fatalf("not stable after recovery: %d changes, %d errors", n, h.errs)
 	}
 }

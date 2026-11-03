@@ -18,6 +18,7 @@
 package contabotest
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -58,11 +59,12 @@ type Record struct {
 
 // Fault makes the next matching requests fail.
 type Fault struct {
-	Method string // empty matches any method
-	Path   string // substring of the URL path; empty matches any path
-	Status int
-	Count  int
-	Header http.Header
+	Method       string // empty matches any method
+	Path         string // substring of the URL path; empty matches any path
+	BodyContains string // substring of the request body; empty matches any body
+	Status       int
+	Count        int
+	Header       http.Header
 }
 
 // Server is the fake API.
@@ -157,6 +159,13 @@ func (s *Server) Inject(f Fault) {
 	s.faults = append(s.faults, &f)
 }
 
+// ClearFaults removes every fault, as if the outage ended.
+func (s *Server) ClearFaults() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.faults = nil
+}
+
 // Calls returns how often "METHOD /path-pattern" was hit. Patterns use the
 // operation names: listZones, listRecords, create, update, delete, bulkDelete, token.
 func (s *Server) Calls(op string) int {
@@ -240,13 +249,20 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *Server) fault(w http.ResponseWriter, r *http.Request) bool {
+	// Read the body once so faults can match on it, then put it back.
+	var body []byte
+	if r.Body != nil {
+		body, _ = io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		r.Body = io.NopCloser(bytes.NewReader(body))
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, f := range s.faults {
 		if f.Count <= 0 {
 			continue
 		}
-		if (f.Method == "" || f.Method == r.Method) && strings.Contains(r.URL.Path, f.Path) {
+		if (f.Method == "" || f.Method == r.Method) && strings.Contains(r.URL.Path, f.Path) &&
+			(f.BodyContains == "" || bytes.Contains(body, []byte(f.BodyContains))) {
 			f.Count--
 			for k, v := range f.Header {
 				w.Header()[k] = v

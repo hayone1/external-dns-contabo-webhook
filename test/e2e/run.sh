@@ -47,7 +47,7 @@ API_URL=${CONTABO_API_URL:-https://api.contabo.com}
 AUTH_URL=${CONTABO_AUTH_URL:-https://auth.contabo.com/auth/realms/contabo/protocol/openid-connect/token}
 APEX=${E2E_TEST_APEX:-false}
 HERE=$(cd "$(dirname "$0")" && pwd)
-TIMEOUT=240
+TIMEOUT=300
 
 log()  { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 pass() { printf '\033[1;32m    ok:\033[0m %s\n' "$*"; }
@@ -64,7 +64,7 @@ TOKEN_AT=0
 token() {
   local now; now=$(date +%s)
   if [ -z "$TOKEN" ] || [ $((now - TOKEN_AT)) -gt 200 ]; then
-    TOKEN=$(curl -sSf "$AUTH_URL" \
+    TOKEN=$(curl -sSf --retry 4 --retry-delay 3 --retry-all-errors "$AUTH_URL" \
       --data-urlencode grant_type=password \
       --data-urlencode "client_id=$CONTABO_CLIENT_ID" \
       --data-urlencode "client_secret=$CONTABO_CLIENT_SECRET" \
@@ -76,7 +76,10 @@ token() {
 }
 
 api() { # METHOD PATH [BODY]
-  local args=(-sSf -X "$1" -H "Authorization: Bearer $(token)" -H "x-request-id: $(cat /proc/sys/kernel/random/uuid)")
+  # Retry on errors: the Contabo API has short outages, and a failed read
+  # must never look like "no records".
+  local args=(-sSf --retry 4 --retry-delay 3 --retry-all-errors -X "$1"
+              -H "Authorization: Bearer $(token)" -H "x-request-id: $(cat /proc/sys/kernel/random/uuid)")
   [ $# -ge 3 ] && args+=(-H 'Content-Type: application/json' --data "$3")
   curl "${args[@]}" "$API_URL$2"
 }
@@ -118,10 +121,11 @@ wait_until() {
   pass "$what"
 }
 
-has()      { records | grep -qxF -- "$1"; }
-has_like() { records | grep -qE -- "$1"; }
-missing()  { ! records | grep -qE -- "$1"; }
-empty()    { [ -z "$(records)" ]; }
+# These fail when the API call fails, so an outage never counts as a pass.
+has()      { local r; r=$(records) || return 1; grep -qxF -- "$1" <<<"$r"; }
+has_like() { local r; r=$(records) || return 1; grep -qE -- "$1" <<<"$r"; }
+missing()  { local r; r=$(records) || return 1; ! grep -qE -- "$1" <<<"$r"; }
+empty()    { local r; r=$(records) || return 1; [ -z "$r" ]; }
 
 # dig_has NAME TYPE VALUE: ask Contabo's name servers directly. Uses IPv4
 # (many CI runners have no IPv6) and falls back to TCP when UDP is blocked.
@@ -300,8 +304,20 @@ kubectl -n "$NS" delete service web wild alias --wait >/dev/null
 [ "$APEX" = "true" ] && kubectl -n "$NS" delete service apex --wait >/dev/null
 wait_until "every record of this run is gone" empty
 
-errors=$(webhook_logs | grep -c 'level=ERROR' || true)
-[ "$errors" = "0" ] || { webhook_logs | grep 'level=ERROR' | tail -20; fail "webhook logged $errors errors"; }
-pass "webhook logged no errors"
+# Errors caused by Contabo itself (HTTP 5xx, 429) are expected now and then
+# and are retried. Any other error means a bug.
+transient='HTTP (5[0-9][0-9]|429)|could not delete record IDs|ownership record .* could not be created'
+all_errors=$(webhook_logs | grep 'level=ERROR' || true)
+real_errors=$(grep -vE "$transient" <<<"$all_errors" | sed '/^$/d' || true)
+if [ -n "$real_errors" ]; then
+  echo "$real_errors" | tail -20
+  fail "webhook logged $(wc -l <<<"$real_errors") unexpected errors"
+fi
+n_transient=$(sed '/^$/d' <<<"$all_errors" | wc -l)
+if [ "$n_transient" -gt 0 ]; then
+  pass "webhook logged no unexpected errors ($n_transient retried Contabo API errors)"
+else
+  pass "webhook logged no errors"
+fi
 
 log "end-to-end test passed"

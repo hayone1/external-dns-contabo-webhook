@@ -88,6 +88,10 @@ default and waits for `ratelimit-reset` when it gets a 429.
 - **Update** of a record ID that does not exist: HTTP **500**, not 404.
   The webhook always reads fresh IDs before it updates, so this does not happen.
 - **Delete** of a record ID that does not exist: HTTP 204, same as success.
+- **Delete can fail for a while.** On 2026-11-03 single and bulk deletes
+  answered HTTP 500 (or listed IDs in `failedIds`) for about 90 seconds, then
+  worked again. The webhook retries, keeps ownership records of records it
+  could not delete, and lets external-dns try again on the next loop.
 - **Bulk delete** takes `{"recordIds": [...]}` and answers with `failedIds`.
   Unknown IDs are not reported as failed.
 

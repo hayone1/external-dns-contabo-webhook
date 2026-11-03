@@ -18,6 +18,9 @@ First release.
 - Dry-run mode.
 - Contabo client with OAuth2 password grant, automatic re-login, rate
   limiting, retries with backoff for 429 and 5xx, and pagination.
+- Ownership-safe ordering: ownership TXT records are created before and
+  deleted after the records they own, so a Contabo outage can never leave
+  an orphaned record behind.
 - Desired endpoints Contabo would refuse (private IPs, NS/PTR, set-identifier)
   are dropped with a warning instead of failing the whole batch.
 - Credentials can be read from files (`*_FILE` variables).
