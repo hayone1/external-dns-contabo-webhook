@@ -123,9 +123,38 @@ has_like() { records | grep -qE -- "$1"; }
 missing()  { ! records | grep -qE -- "$1"; }
 empty()    { [ -z "$(records)" ]; }
 
-dig_has() { # NAME TYPE VALUE
-  command -v dig >/dev/null || return 0
-  dig +short +norec "@ns1.contabo.net" "$1" "$2" | grep -qiF -- "$3"
+# dig_has NAME TYPE VALUE: ask Contabo's name servers directly. Uses IPv4
+# (many CI runners have no IPv6) and falls back to TCP when UDP is blocked.
+# Succeeds if any server returns VALUE.
+DNS_REACHABLE=unknown
+dig_has() {
+  local ns out proto reached=false
+  for ns in ns1.contabo.net ns2.contabo.net ns3.contabo.net; do
+    for proto in +notcp +tcp; do
+      if out=$(dig -4 "$proto" +short +norec +time=3 +tries=1 "@$ns" "$1" "$2" 2>/dev/null); then
+        reached=true
+        grep -qiF -- "$3" <<<"$out" && { DNS_REACHABLE=true; return 0; }
+        break
+      fi
+    done
+  done
+  $reached && DNS_REACHABLE=true || DNS_REACHABLE=false
+  return 1
+}
+
+# check_dns NAME TYPE VALUE: wait for the answer, but only warn when this
+# machine cannot reach any Contabo name server at all.
+check_dns() {
+  if ! command -v dig >/dev/null; then
+    echo "    skip: dig is not installed, DNS check skipped"
+    return
+  fi
+  dig_has "$@" || true
+  if [ "$DNS_REACHABLE" = "false" ]; then
+    echo "    skip: cannot reach any Contabo name server from here, DNS check skipped"
+    return
+  fi
+  wait_until "Contabo name servers answer $1 $2 $3" dig_has "$@"
 }
 
 # ------------------------------------------------------------------- cluster
@@ -254,7 +283,7 @@ if [ "$APEX" = "true" ]; then
   wait_until "A on the zone apex ${ZONE}"       has "${ZONE} A ${IP1} 300"
   wait_until "ownership TXT for the apex"       has_like "^extdns-a\.${ZONE//./\\.} TXT .*owner=${OWNER}"
 fi
-wait_until "Contabo name server answers www"    dig_has "www.${BASE}" A "$IP1"
+check_dns "www.${BASE}" A "$IP1"
 expect_stable
 
 log "step 2: update records"
