@@ -49,5 +49,9 @@ docker run --rm docker.io/hayone/external-dns-contabo-webhook:X.Y.Z version
   (`git push --delete origin vX.Y.Z && git tag -d vX.Y.Z`) and tag again.
 - Push failed after the build: check the `DOCKER_USERNAME` and
   `DOCKER_PASSWORD` secrets of the `release` environment, then re-run the
-  failed jobs.
+  failed jobs. `DOCKER_PASSWORD` needs Read & Write scope. Test a new token
+  without printing it: `docker login -u hayone --password-stdin`.
+- "Docker Hub description" failed with `Forbidden`: `DOCKERHUB_DESCRIPTION_TOKEN`
+  needs Read, Write & Delete scope. A Read & Write token cannot edit the page.
+- `cosign verify` says `no signatures found`: use cosign 3 or newer.
 - Never move a tag that already published images. Release a new patch instead.

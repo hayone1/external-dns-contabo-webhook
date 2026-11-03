@@ -41,7 +41,7 @@ Not security problems (open a normal issue instead):
 - The image has no shell, runs as a non-root user and works with a read-only file system.
 - All GitHub Actions are pinned to a commit SHA and updated by Dependabot.
 
-You can check that an image really came from this repository:
+You can check that an image really came from this repository (needs cosign 3 or newer):
 
 ```sh
 cosign verify ghcr.io/hayone1/external-dns-contabo-webhook:0.1.0 \

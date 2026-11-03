@@ -253,8 +253,9 @@ jobs:
           # shellcheck disable=SC2086
           gh release create "$TAG" --repo "$REPO" --title "$TAG" --notes-file notes.md --generate-notes --verify-tag $prerelease
 
-  # Optional. Pushing images only needs a read/write token, but changing the
-  # Docker Hub page needs a token with more rights. Add one as the secret
+  # Optional. Pushing images only needs a Read & Write token, but changing the
+  # Docker Hub page needs Read, Write & Delete (Read & Write gets 403
+  # "insufficient scope"). Add such a token as the secret
   # DOCKERHUB_DESCRIPTION_TOKEN of the "release" environment to keep the page
   # in sync; without it this job is skipped with a notice.
   dockerhub-description:

@@ -161,13 +161,18 @@ annotations) and wait one loop before you uninstall.
 ## Checking an image before you use it
 
 Every image is signed. To check that it was built by this project's GitHub
-workflow, install [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) and run:
+workflow, install [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
+version 3 or newer and run:
 
 ```sh
 cosign verify ghcr.io/hayone1/external-dns-contabo-webhook:0.1.0 \
   --certificate-identity-regexp '^https://github.com/hayone1/external-dns-contabo-webhook/.github/workflows/release.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
+
+The same works for `docker.io/hayone/external-dns-contabo-webhook:0.1.0`.
+cosign 2.x says `no signatures found`, because it cannot read the newer
+signature format. Upgrade cosign.
 
 ## Without Helm
 

@@ -45,11 +45,28 @@ tag and no Docker Hub description update.
 | Where | Name | What |
 |---|---|---|
 | Environment `release` | secret `DOCKER_USERNAME` | Docker Hub user name |
-| Environment `release` | secret `DOCKER_PASSWORD` | Docker Hub access token with read and write scope |
-| Environment `release` | secret `DOCKERHUB_DESCRIPTION_TOKEN` (optional) | Docker Hub token that may edit the repository page. Without it the page is not updated. |
+| Environment `release` | secret `DOCKER_PASSWORD` | Docker Hub personal access token with **Read & Write** scope. This is enough to push images. |
+| Environment `release` | secret `DOCKERHUB_DESCRIPTION_TOKEN` (optional) | Docker Hub token with **Read, Write & Delete** scope. Only this scope may edit the repository page; a Read & Write token gets `403 insufficient scope`. Without this secret the page is not updated. |
 
 The `release` environment only allows `v*` tags, so a pull request can never
 read these secrets. There are no Contabo secrets: CI only uses the fake API.
+
+### Replacing the Docker Hub token
+
+Do this when the token expires or leaks.
+
+1. On Docker Hub, go to **Account settings > Personal access tokens** and
+   create a token with **Read & Write** scope.
+2. Save it in GitHub (the command asks you to paste it, so it never lands in
+   your shell history):
+
+   ```sh
+   gh secret set DOCKER_PASSWORD --env release --repo hayone1/external-dns-contabo-webhook
+   ```
+
+3. Delete the old token on Docker Hub.
+4. If a release failed at **Copy to Docker Hub**, re-run the failed jobs:
+   `gh run rerun <run-id> --failed`.
 
 ## Versioning
 
