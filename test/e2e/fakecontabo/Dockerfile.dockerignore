@@ -1,0 +1,6 @@
+*
+!go.mod
+!go.sum
+!internal/
+!test/e2e/fakecontabo/
+**/*_test.go

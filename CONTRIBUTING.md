@@ -16,7 +16,7 @@ Thanks for helping! Bug reports, docs fixes and code are all welcome.
 - `make`
 - Docker, if you want to build the image
 - For the end-to-end test only: a Kubernetes cluster (kind is fine), `kubectl`,
-  `helm`, `jq`, `curl`, and a Contabo account with a test zone
+  `helm`, `jq` and `curl`. No Contabo account is needed.
 
 ## The everyday loop
 
@@ -54,24 +54,23 @@ the webhook (`test/integration`).
   style, for example `fix: keep TXT quotes when updating`.
 - Fill in the pull request template.
 - CI must pass: lint, tests, vulnerability check, image build and scan,
-  workflow checks.
-- One maintainer approval is needed to merge.
+  workflow checks, and the end-to-end test.
+- A maintainer reviews and merges it.
 
 ## Running the end-to-end test
 
-This talks to a real Contabo zone. Every name it creates is under
-`e2e-<random>.<your zone>`, and it deletes everything when it finishes.
+It runs real external-dns with the webhook in a kind cluster, against a fake
+Contabo API that runs as a pod in the same cluster. No account or secrets.
 
 ```sh
-cp .env.example .env   # fill in your Contabo credentials and E2E_ZONE
-make docker-build IMAGE=external-dns-contabo-webhook VERSION=e2e
+make e2e-images
 kind create cluster
-kind load docker-image external-dns-contabo-webhook:e2e
-set -a; . ./.env; set +a
+kind load docker-image external-dns-contabo-webhook:e2e fake-contabo:e2e
 make e2e
 ```
 
-See [docs/development.md](docs/development.md) for more.
+CI runs the same test on every pull request. To test against the real
+Contabo API with your own account, see [docs/development.md](docs/development.md).
 
 ## Using AI coding agents
 

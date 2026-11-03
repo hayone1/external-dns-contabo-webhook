@@ -1,5 +1,6 @@
-# Helm values for the end-to-end test. run.sh fills in the image, the
-# domain filter and the owner ID with --set.
+# Helm values for the end-to-end test. run.sh adds a second values file with
+# the image, the webhook environment (credentials and API address), the
+# domain filter, the owner ID and the namespace to watch.
 provider:
   name: webhook
   webhook:
@@ -7,19 +8,6 @@ provider:
       repository: external-dns-contabo-webhook
       tag: e2e
       pullPolicy: IfNotPresent
-    env:
-      - name: CONTABO_CLIENT_ID
-        valueFrom: { secretKeyRef: { name: contabo-credentials, key: client-id } }
-      - name: CONTABO_CLIENT_SECRET
-        valueFrom: { secretKeyRef: { name: contabo-credentials, key: client-secret } }
-      - name: CONTABO_API_USER
-        valueFrom: { secretKeyRef: { name: contabo-credentials, key: api-user } }
-      - name: CONTABO_API_PASSWORD
-        valueFrom: { secretKeyRef: { name: contabo-credentials, key: api-password } }
-      - name: CONTABO_DEFAULT_TTL
-        value: "300"
-      - name: LOG_LEVEL
-        value: debug
     livenessProbe:
       httpGet: { path: /healthz, port: http-webhook }
     readinessProbe:

@@ -12,6 +12,9 @@ pushing a tag: a pushed tag publishes images.
 ## Steps
 
 1. Make sure `main` is green: `gh run list --branch main --limit 5`.
+   CI only tests against the fake Contabo API, so also run the end-to-end
+   test against the real API on your machine (`E2E_MODE=real make e2e`, see
+   the `run-e2e` skill). It catches changes on Contabo's side.
 2. Pick the version with [semver](https://semver.org/):
    - fixes only: bump the patch number (`v0.1.0` to `v0.1.1`)
    - new feature or setting: bump the minor number

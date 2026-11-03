@@ -1,38 +1,30 @@
 name: End-to-end
 
-# Runs real external-dns with this webhook in a kind cluster against a real
-# Contabo zone. It needs Contabo credentials, so it never runs for pull
-# requests from forks. It runs on main, before every release, once a week
-# (to catch Contabo API changes early) and on demand.
+# Runs real external-dns with this webhook in a kind cluster, against the
+# fake Contabo API (test/e2e/fakecontabo) running in the same cluster. It
+# needs no secrets and no Contabo account, so it is safe for every pull
+# request, forks included. To test against the real Contabo API, run
+# test/e2e/run.sh with E2E_MODE=real on your own machine.
 on:
   push:
     branches: [main]
-    paths:
-      - "cmd/**"
-      - "internal/**"
-      - "go.mod"
-      - "go.sum"
-      - "Dockerfile"
-      - "test/e2e/**"
-      - ".github/workflows/e2e.yml"
-  schedule:
-    - cron: "17 6 * * 3" # every Wednesday
+  pull_request:
   workflow_dispatch:
   workflow_call:
 
-# Only one run at a time, so runs never fight over the zone or the rate limit.
+# A fixed prefix: when the release workflow calls this one, github.workflow
+# is "Release", and sharing its group would make the two wait for each other.
 concurrency:
-  group: e2e
-  cancel-in-progress: false
+  group: e2e-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions: {}
 
 jobs:
   e2e:
-    name: kind + Contabo
+    name: kind + fake Contabo
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: e2e
     permissions:
       contents: read
     steps:
@@ -43,7 +35,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: Build image
+      - name: Build webhook image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -53,24 +45,25 @@ jobs:
             VERSION=e2e
             COMMIT=${{ github.sha }}
           cache-from: type=gha
+      - name: Build fake Contabo API image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: test/e2e/fakecontabo/Dockerfile
+          load: true
+          tags: fake-contabo:e2e
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
       - name: Create kind cluster
         uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
         with:
           cluster_name: e2e
-      - name: Load image into kind
-        run: kind load docker-image external-dns-contabo-webhook:e2e --name e2e
-      - name: Install dig
-        run: command -v dig || (sudo apt-get update -qq && sudo apt-get install -y -qq dnsutils)
+      - name: Load images into kind
+        run: kind load docker-image external-dns-contabo-webhook:e2e fake-contabo:e2e --name e2e
       - name: Run end-to-end test
         env:
-          CONTABO_CLIENT_ID: ${{ secrets.CONTABO_CLIENT_ID }}
-          CONTABO_CLIENT_SECRET: ${{ secrets.CONTABO_CLIENT_SECRET }}
-          CONTABO_API_USER: ${{ secrets.CONTABO_API_USER }}
-          CONTABO_API_PASSWORD: ${{ secrets.CONTABO_API_PASSWORD }}
-          E2E_ZONE: ${{ vars.E2E_ZONE }}
-          E2E_TARGET_IPS: ${{ vars.E2E_TARGET_IPS }}
+          E2E_MODE: fake
           E2E_IMAGE: external-dns-contabo-webhook:e2e
+          E2E_FAKE_IMAGE: fake-contabo:e2e
         run: |
           export E2E_ID="gh${GITHUB_RUN_ID}${GITHUB_RUN_ATTEMPT}"
           ./test/e2e/run.sh

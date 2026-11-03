@@ -59,8 +59,13 @@ docker-build: ## Build the image for your machine's platform.
 docker-buildx: ## Build the multi-arch image (no push).
 	docker buildx build --platform $(PLATFORMS) --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMAGE):$(VERSION) .
 
+.PHONY: e2e-images
+e2e-images: ## Build the webhook and fake Contabo API images for the end-to-end test.
+	docker build --build-arg VERSION=e2e -t external-dns-contabo-webhook:e2e .
+	docker build -f test/e2e/fakecontabo/Dockerfile -t fake-contabo:e2e .
+
 .PHONY: e2e
-e2e: ## Run the end-to-end test against a real cluster and a real Contabo zone. See docs/development.md.
+e2e: ## Run the end-to-end test (E2E_MODE=fake by default, or real). See docs/development.md.
 	./test/e2e/run.sh
 
 .PHONY: clean

@@ -7,7 +7,9 @@ This page is for maintainers.
 Pushing a tag like `v0.2.0` on `main` starts `.github/workflows/release.yml`:
 
 1. **Checks** that the tag points to a commit on `main`.
-2. **Tests**: unit and integration tests, then the end-to-end test against Contabo.
+2. **Tests**: unit and integration tests, then the end-to-end test (kind +
+   fake Contabo API). Run the end-to-end test against the real Contabo API
+   on your own machine first (`E2E_MODE=real`, see [development.md](development.md)).
 3. **Builds** the image for `linux/amd64` and `linux/arm64`.
 4. **Pushes** it to Docker Hub (`hayone/external-dns-contabo-webhook`) and
    GHCR (`ghcr.io/hayone1/external-dns-contabo-webhook`) with these tags:
@@ -43,13 +45,11 @@ tag and no Docker Hub description update.
 | Where | Name | What |
 |---|---|---|
 | Environment `release` | secret `DOCKER_USERNAME` | Docker Hub user name |
-| Environment `release` | secret `DOCKER_PASSWORD` | Docker Hub access token with read, write and delete scope |
-| Environment `e2e` | secrets `CONTABO_CLIENT_ID`, `CONTABO_CLIENT_SECRET`, `CONTABO_API_USER`, `CONTABO_API_PASSWORD` | Contabo credentials for the end-to-end test |
-| Environment `e2e` | variable `E2E_ZONE` | the Contabo zone the test may use |
-| Environment `e2e` | variable `E2E_TARGET_IPS` (optional) | two public IPs, comma separated |
+| Environment `release` | secret `DOCKER_PASSWORD` | Docker Hub access token with read and write scope |
+| Environment `release` | secret `DOCKERHUB_DESCRIPTION_TOKEN` (optional) | Docker Hub token that may edit the repository page. Without it the page is not updated. |
 
-Both environments only allow `main` and `v*` tags, so a pull request can
-never read these secrets.
+The `release` environment only allows `v*` tags, so a pull request can never
+read these secrets. There are no Contabo secrets: CI only uses the fake API.
 
 ## Versioning
 

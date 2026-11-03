@@ -44,8 +44,9 @@ flowchart LR
 - Small and locked down: a 30 MB image with no shell, running as a non-root
   user. Images for `amd64` and `arm64`, signed with cosign.
 - Prometheus metrics and health checks built in.
-- Tested on every change against a fake Contabo API, and against the real one
-  in a real cluster.
+- Tested on every change in a real cluster with real external-dns, against a
+  fake Contabo API that copies the real one's quirks. Maintainers also test
+  against the real Contabo API before releases.
 
 ## Quick start
 

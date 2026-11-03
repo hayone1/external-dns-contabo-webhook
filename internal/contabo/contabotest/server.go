@@ -59,18 +59,20 @@ type Record struct {
 
 // Fault makes the next matching requests fail.
 type Fault struct {
-	Method       string // empty matches any method
-	Path         string // substring of the URL path; empty matches any path
-	BodyContains string // substring of the request body; empty matches any body
-	Status       int
-	Count        int
-	Header       http.Header
+	Method       string      `json:"method,omitempty"`       // empty matches any method
+	Path         string      `json:"path,omitempty"`         // substring of the URL path; empty matches any path
+	BodyContains string      `json:"bodyContains,omitempty"` // substring of the request body; empty matches any body
+	Status       int         `json:"status"`
+	Count        int         `json:"count"`
+	Header       http.Header `json:"header,omitempty"`
 }
 
 // Server is the fake API.
 type Server struct {
+	// Server is only set by New. NewHandler leaves it nil.
 	*httptest.Server
 
+	handler  http.Handler
 	mu       sync.Mutex
 	zones    map[string][]*Record
 	order    []string
@@ -83,8 +85,21 @@ type Server struct {
 	TokenTTL int
 }
 
-// New starts a fake server. Close it when done.
+// New starts a fake server on a random local port. Close it when done.
 func New() *Server {
+	s := NewHandler()
+	s.Server = httptest.NewServer(s.handler)
+	return s
+}
+
+// NewHandler creates the fake without starting a server. Serve
+// Handler() yourself, for example in a container for end-to-end tests.
+//
+// Besides the Contabo API it serves two test-only endpoints:
+//
+//	POST   /_fake/faults   add a Fault (JSON body)
+//	DELETE /_fake/faults   remove all faults
+func NewHandler() *Server {
 	s := &Server{
 		zones:    map[string][]*Record{},
 		nextID:   1000,
@@ -93,15 +108,35 @@ func New() *Server {
 		TokenTTL: 300,
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /_fake/faults", s.addFault)
+	mux.HandleFunc("DELETE /_fake/faults", func(w http.ResponseWriter, _ *http.Request) {
+		s.ClearFaults()
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
 	mux.HandleFunc("POST /token", s.token)
 	mux.HandleFunc("GET /v1/dns/zones", s.auth(s.listZones))
+	mux.HandleFunc("GET /v1/dns/zones/{zone}", s.auth(s.getZone))
 	mux.HandleFunc("GET /v1/dns/zones/{zone}/records", s.auth(s.listRecords))
 	mux.HandleFunc("POST /v1/dns/zones/{zone}/records", s.auth(s.createRecord))
 	mux.HandleFunc("DELETE /v1/dns/zones/{zone}/records/bulk", s.auth(s.bulkDelete))
 	mux.HandleFunc("PATCH /v1/dns/zones/{zone}/records/{id}", s.auth(s.updateRecord))
 	mux.HandleFunc("DELETE /v1/dns/zones/{zone}/records/{id}", s.auth(s.deleteRecord))
-	s.Server = httptest.NewServer(mux)
+	s.handler = mux
 	return s
+}
+
+// Handler returns the HTTP handler of the fake API.
+func (s *Server) Handler() http.Handler { return s.handler }
+
+func (s *Server) addFault(w http.ResponseWriter, r *http.Request) {
+	var f Fault
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&f); err != nil || f.Status < 100 || f.Status > 599 || f.Count < 1 {
+		writeError(w, http.StatusBadRequest, "body must be a fault with status 100-599 and count >= 1")
+		return
+	}
+	s.Inject(f)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // TokenURL is the URL of the fake token endpoint.
@@ -328,6 +363,18 @@ func (s *Server) zoneOr404(w http.ResponseWriter, r *http.Request) (string, bool
 		writeError(w, http.StatusNotFound, "Entry DNS Zone not found by zone name = "+zone)
 	}
 	return zone, ok
+}
+
+func (s *Server) getZone(w http.ResponseWriter, r *http.Request) {
+	s.count("getZone")
+	zone, ok := s.zoneOr404(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data":   []map[string]string{{"tenantId": "INT", "customerId": "1", "zoneName": zone}},
+		"_links": map[string]string{"self": r.URL.Path},
+	})
 }
 
 func (s *Server) listRecords(w http.ResponseWriter, r *http.Request) {

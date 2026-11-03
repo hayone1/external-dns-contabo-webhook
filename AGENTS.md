@@ -22,7 +22,7 @@ calls. Health and metrics are on `0.0.0.0:8080`.
 | `internal/server` | HTTP servers; reuses the upstream external-dns webhook handlers |
 | `internal/metrics` | Prometheus metrics |
 | `test/integration` | Real external-dns planner + TXT registry + webhook client against the fake API |
-| `test/e2e` | Real cluster + real Contabo zone test (`run.sh`) |
+| `test/e2e` | Real cluster test (`run.sh`); `fakecontabo/` is the fake API image it runs in the cluster |
 | `deploy/` | Example Helm values and Secret |
 | `docs/` | User and maintainer docs |
 
@@ -33,7 +33,8 @@ make test    # go test -race ./... (no network or Contabo account needed)
 make lint    # golangci-lint v2
 make fmt     # gofmt -s
 make build
-make e2e     # needs a cluster, Contabo credentials and E2E_ZONE; see docs/development.md
+make e2e-images && make e2e   # needs a cluster; uses the fake Contabo API
+E2E_MODE=real make e2e        # real Contabo; needs credentials and E2E_ZONE (local only)
 ```
 
 Run `make test` and `make lint` before you say a change is done.
@@ -45,7 +46,8 @@ Run `make test` and `make lint` before you say a change is done.
    values into the conversation; pass them to commands through the
    environment instead.
 2. **Never create or delete Contabo zones** from code. Zone lifecycle belongs
-   to the user.
+   to the user. **CI never uses a real Contabo account**: GitHub workflows
+   test against the fake API only. Do not add Contabo secrets to the repo.
 3. **The fake API is the contract.** Contabo's real behavior is written down
    in `docs/contabo-api.md` and copied in `internal/contabo/contabotest`.
    If you learn something new about the real API, update both, plus a test.

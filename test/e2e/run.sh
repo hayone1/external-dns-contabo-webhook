@@ -1,38 +1,62 @@
 #!/usr/bin/env bash
-# End-to-end test: real external-dns + this webhook + a real Contabo zone.
+# End-to-end test: real external-dns + this webhook in a real cluster.
 #
-# What it does:
-#   1. installs the external-dns Helm chart with this webhook as a sidecar
-#      into a fresh namespace
-#   2. creates Services and checks that the A, CNAME and TXT records show up
-#      in Contabo (through the API and through Contabo's name servers)
-#   3. changes the Services and checks the records follow
-#   4. checks that external-dns stops changing things once it has caught up
-#      (no permanent diff)
-#   5. deletes the Services and checks every record is gone
+# Two modes:
 #
-# Every name lives under e2e-<id>.<zone>, so runs never touch real records.
+#   E2E_MODE=fake (default, used by CI)
+#     Runs the fake Contabo API (test/e2e/fakecontabo) inside the cluster.
+#     Needs no Contabo account. Also simulates a Contabo outage.
 #
-# Required environment:
+#   E2E_MODE=real
+#     Talks to the real Contabo API and a real zone. Use it locally before a
+#     release. Every name lives under e2e-<id>.<zone>, so it never touches
+#     your real records.
+#
+# What it checks:
+#   1. creating Services creates A, CNAME and TXT ownership records
+#   2. changing the Services changes the records
+#   3. external-dns stops changing things once it has caught up (no permanent diff)
+#   4. deleting the Services deletes every record, even through an outage (fake mode)
+#
+# Environment:
+#   E2E_MODE            fake (default) or real
+#   E2E_IMAGE           webhook image already in the cluster (default external-dns-contabo-webhook:e2e)
+#   E2E_FAKE_IMAGE      fake API image already in the cluster (default fake-contabo:e2e)
+#   E2E_ZONE            zone to use. Fake mode: default example.com. Real mode: required,
+#                       must already exist in Contabo.
 #   CONTABO_CLIENT_ID, CONTABO_CLIENT_SECRET, CONTABO_API_USER, CONTABO_API_PASSWORD
-#   E2E_ZONE            a zone that already exists in Contabo, e.g. example.com
-#
-# Optional environment:
-#   E2E_IMAGE           image already available to the cluster (default external-dns-contabo-webhook:e2e)
+#                       real mode only
 #   E2E_TARGET_IPS      two public IPs, comma separated (default 1.1.1.1,1.0.0.1)
+#   E2E_TEST_APEX       "true" to also test the bare domain. Default: true in fake
+#                       mode, false in real mode (only use it on a zone nothing else manages).
 #   E2E_ID              unique run ID (default: random)
-#   E2E_TEST_APEX       "true" to also test a record on the zone apex. Only use
-#                       this on a zone that nothing else manages.
 #   E2E_KEEP            "true" to keep the namespace for debugging
 #   E2E_CHART_VERSION   external-dns chart version (default 1.23.0)
+#   E2E_FAKE_PORT       local port for the fake API (default 18080)
 #   KUBECONFIG          cluster to use (the current context is used)
 #
-# Tools: kubectl, helm, curl, jq. dig is used when it is installed.
+# Tools: kubectl, helm, curl, jq. In real mode dig is used when installed.
 
 set -euo pipefail
 
-: "${CONTABO_CLIENT_ID:?}" "${CONTABO_CLIENT_SECRET:?}" "${CONTABO_API_USER:?}" "${CONTABO_API_PASSWORD:?}"
-: "${E2E_ZONE:?set E2E_ZONE to a zone that exists in Contabo}"
+MODE=${E2E_MODE:-fake}
+case "$MODE" in
+  fake)
+    # Fixed credentials of the fake API (internal/contabo/contabotest). Not secret.
+    CONTABO_CLIENT_ID=INT-test
+    CONTABO_CLIENT_SECRET=test-secret
+    CONTABO_API_USER=user@example.com
+    CONTABO_API_PASSWORD=test-password
+    E2E_ZONE=${E2E_ZONE:-example.com}
+    APEX=${E2E_TEST_APEX:-true}
+    ;;
+  real)
+    : "${CONTABO_CLIENT_ID:?}" "${CONTABO_CLIENT_SECRET:?}" "${CONTABO_API_USER:?}" "${CONTABO_API_PASSWORD:?}"
+    : "${E2E_ZONE:?set E2E_ZONE to a zone that exists in Contabo}"
+    APEX=${E2E_TEST_APEX:-false}
+    ;;
+  *) echo "E2E_MODE must be fake or real" >&2; exit 2 ;;
+esac
 
 ZONE=$(echo "$E2E_ZONE" | tr '[:upper:]' '[:lower:]')
 ID=${E2E_ID:-$(od -An -N4 -tx4 /dev/urandom | tr -dc '0-9a-f')}
@@ -41,13 +65,25 @@ NS="extdns-e2e-${ID}"
 RELEASE="external-dns-e2e-${ID}"
 OWNER="e2e-${ID}"
 IMAGE=${E2E_IMAGE:-external-dns-contabo-webhook:e2e}
+FAKE_IMAGE=${E2E_FAKE_IMAGE:-fake-contabo:e2e}
 IFS=, read -r IP1 IP2 <<<"${E2E_TARGET_IPS:-1.1.1.1,1.0.0.1}"
 CHART_VERSION=${E2E_CHART_VERSION:-1.23.0}
-API_URL=${CONTABO_API_URL:-https://api.contabo.com}
-AUTH_URL=${CONTABO_AUTH_URL:-https://auth.contabo.com/auth/realms/contabo/protocol/openid-connect/token}
-APEX=${E2E_TEST_APEX:-false}
 HERE=$(cd "$(dirname "$0")" && pwd)
 TIMEOUT=300
+PF_PID=""
+
+if [ "$MODE" = "fake" ]; then
+  # The script reaches the fake through a port-forward; the webhook through the Service.
+  API_URL="http://127.0.0.1:${E2E_FAKE_PORT:-18080}"
+  AUTH_URL="$API_URL/token"
+  WEBHOOK_API_URL="http://contabo-fake.${NS}.svc.cluster.local:8080"
+  WEBHOOK_AUTH_URL="$WEBHOOK_API_URL/token"
+else
+  API_URL=${CONTABO_API_URL:-https://api.contabo.com}
+  AUTH_URL=${CONTABO_AUTH_URL:-https://auth.contabo.com/auth/realms/contabo/protocol/openid-connect/token}
+  WEBHOOK_API_URL=$API_URL
+  WEBHOOK_AUTH_URL=$AUTH_URL
+fi
 
 log()  { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 pass() { printf '\033[1;32m    ok:\033[0m %s\n' "$*"; }
@@ -146,9 +182,12 @@ dig_has() {
   return 1
 }
 
-# check_dns NAME TYPE VALUE: wait for the answer, but only warn when this
-# machine cannot reach any Contabo name server at all.
+# check_dns NAME TYPE VALUE: real mode only. Waits for the answer, but only
+# warns when this machine cannot reach any Contabo name server at all.
 check_dns() {
+  if [ "$MODE" != "real" ]; then
+    return
+  fi
   if ! command -v dig >/dev/null; then
     echo "    skip: dig is not installed, DNS check skipped"
     return
@@ -163,14 +202,17 @@ check_dns() {
 
 # ------------------------------------------------------------------- cluster
 
-webhook_logs() { kubectl -n "$NS" logs deploy/${RELEASE} -c webhook --tail=-1 2>/dev/null || true; }
+webhook_logs() { kubectl -n "$NS" logs "deploy/${RELEASE}" -c webhook --tail=-1 2>/dev/null || true; }
 mutations()    { webhook_logs | grep -cE 'msg="(created record|updated record|deleted records)"' || true; }
 
 dump() {
   echo "---- records ----"; records || true
   echo "---- pods ----"; kubectl -n "$NS" get pods -o wide || true
-  echo "---- external-dns (last 60 lines) ----"; kubectl -n "$NS" logs deploy/${RELEASE} -c external-dns --tail=60 || true
-  echo "---- webhook (last 60 lines) ----"; kubectl -n "$NS" logs deploy/${RELEASE} -c webhook --tail=60 || true
+  echo "---- external-dns (last 60 lines) ----"; kubectl -n "$NS" logs "deploy/${RELEASE}" -c external-dns --tail=60 || true
+  echo "---- webhook (last 60 lines) ----"; kubectl -n "$NS" logs "deploy/${RELEASE}" -c webhook --tail=60 || true
+  if [ "$MODE" = "fake" ]; then
+    echo "---- fake Contabo API (last 30 lines) ----"; kubectl -n "$NS" logs deploy/contabo-fake --tail=30 || true
+  fi
 }
 
 cleanup() {
@@ -181,13 +223,16 @@ cleanup() {
   fi
   log "cleaning up"
   helm uninstall "$RELEASE" --namespace "$NS" --wait >/dev/null 2>&1 || true
-  kubectl delete namespace "$NS" --wait=false --ignore-not-found >/dev/null 2>&1 || true
-  # Remove anything the test left behind under its own name.
-  local ids; ids=$(record_ids 2>/dev/null | paste -sd, - || true)
-  if [ -n "$ids" ]; then
-    echo "    deleting leftover record IDs: $ids"
-    api DELETE "/v1/dns/zones/${ZONE}/records/bulk" "{\"recordIds\":[${ids}]}" >/dev/null || true
+  if [ "$MODE" = "real" ]; then
+    # Remove anything the test left behind under its own name.
+    local ids; ids=$(record_ids 2>/dev/null | paste -sd, - || true)
+    if [ -n "$ids" ]; then
+      echo "    deleting leftover record IDs: $ids"
+      api DELETE "/v1/dns/zones/${ZONE}/records/bulk" "{\"recordIds\":[${ids}]}" >/dev/null || true
+    fi
   fi
+  [ -n "$PF_PID" ] && kill "$PF_PID" 2>/dev/null || true
+  kubectl delete namespace "$NS" --wait=false --ignore-not-found >/dev/null 2>&1 || true
   exit "$code"
 }
 trap cleanup EXIT
@@ -233,14 +278,70 @@ spec:
 EOF
 }
 
+start_fake() {
+  kubectl -n "$NS" apply -f - >/dev/null <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: contabo-fake
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: contabo-fake } }
+  template:
+    metadata:
+      labels: { app: contabo-fake }
+    spec:
+      containers:
+        - name: fake
+          image: "${FAKE_IMAGE}"
+          imagePullPolicy: IfNotPresent
+          args: ["-zones", "${ZONE}"]
+          ports: [{ containerPort: 8080 }]
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+          securityContext:
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: contabo-fake
+spec:
+  selector: { app: contabo-fake }
+  ports: [{ port: 8080, targetPort: 8080 }]
+EOF
+  kubectl -n "$NS" rollout status deploy/contabo-fake --timeout=2m >/dev/null
+  kubectl -n "$NS" port-forward svc/contabo-fake "${E2E_FAKE_PORT:-18080}:8080" >/dev/null 2>&1 &
+  PF_PID=$!
+  local i
+  for i in $(seq 1 30); do
+    curl -sf "$API_URL/healthz" >/dev/null && { pass "fake Contabo API is running"; return; }
+    sleep 1
+  done
+  fail "fake Contabo API did not answer on $API_URL"
+}
+
+# fake_outage COUNT: the next COUNT record deletes fail with HTTP 500, like
+# the real outage seen on 2026-11-03.
+fake_outage() {
+  curl -sSf -X POST "$API_URL/_fake/faults" -H 'Content-Type: application/json' \
+    --data "{\"method\":\"DELETE\",\"path\":\"/records/\",\"status\":500,\"count\":$1}" >/dev/null
+}
+
 # ---------------------------------------------------------------------- run
 
-log "run ${ID}: zone ${ZONE}, names under ${BASE}, image ${IMAGE}"
-api GET "/v1/dns/zones/${ZONE}" >/dev/null || { echo "zone ${ZONE} not found in Contabo" >&2; exit 2; }
+log "run ${ID} (${MODE} mode): zone ${ZONE}, names under ${BASE}, image ${IMAGE}"
+kubectl create namespace "$NS" >/dev/null
+if [ "$MODE" = "fake" ]; then
+  start_fake
+fi
+api GET "/v1/dns/zones/${ZONE}" >/dev/null || { echo "zone ${ZONE} not found" >&2; exit 2; }
 [ -z "$(records)" ] || { echo "records already exist under ${BASE}" >&2; exit 2; }
 
 log "installing external-dns ${CHART_VERSION} with the webhook"
-kubectl create namespace "$NS" >/dev/null
 jq -n --arg ns "$NS" --arg id "$CONTABO_CLIENT_ID" --arg secret "$CONTABO_CLIENT_SECRET" \
       --arg user "$CONTABO_API_USER" --arg pw "$CONTABO_API_PASSWORD" '{
   apiVersion: "v1", kind: "Secret", type: "Opaque",
@@ -258,6 +359,19 @@ provider:
     image:
       repository: "${IMAGE%:*}"
       tag: "${IMAGE##*:}"
+    env:
+      - name: CONTABO_CLIENT_ID
+        valueFrom: { secretKeyRef: { name: contabo-credentials, key: client-id } }
+      - name: CONTABO_CLIENT_SECRET
+        valueFrom: { secretKeyRef: { name: contabo-credentials, key: client-secret } }
+      - name: CONTABO_API_USER
+        valueFrom: { secretKeyRef: { name: contabo-credentials, key: api-user } }
+      - name: CONTABO_API_PASSWORD
+        valueFrom: { secretKeyRef: { name: contabo-credentials, key: api-password } }
+      - { name: CONTABO_API_URL, value: "${WEBHOOK_API_URL}" }
+      - { name: CONTABO_AUTH_URL, value: "${WEBHOOK_AUTH_URL}" }
+      - { name: CONTABO_DEFAULT_TTL, value: "300" }
+      - { name: LOG_LEVEL, value: debug }
 txtOwnerId: "${OWNER}"
 domainFilters: ["${filter}"]
 extraArgs:
@@ -300,6 +414,12 @@ wait_until "old CNAME target is gone"              missing "^alias\.${BASE//./\\
 expect_stable
 
 log "step 3: delete records"
+if [ "$MODE" = "fake" ]; then
+  # Enough failures to outlast the webhook's own retries, so external-dns
+  # has to try again on a later loop.
+  fake_outage 15
+  pass "simulating a Contabo outage: the next 15 deletes fail with HTTP 500"
+fi
 kubectl -n "$NS" delete service web wild alias --wait >/dev/null
 [ "$APEX" = "true" ] && kubectl -n "$NS" delete service apex --wait >/dev/null
 wait_until "every record of this run is gone" empty

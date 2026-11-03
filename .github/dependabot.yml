@@ -37,3 +37,12 @@ updates:
       prefix: "deps(docker)"
     cooldown:
       default-days: 7
+
+  - package-ecosystem: docker
+    directory: /test/e2e/fakecontabo
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps(docker)"
+    cooldown:
+      default-days: 7

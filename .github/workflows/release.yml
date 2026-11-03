@@ -47,11 +47,8 @@ jobs:
     needs: test
     permissions:
       contents: read
+    # Runs against the fake Contabo API; it needs no secrets.
     uses: ./.github/workflows/e2e.yml
-    # A called workflow sees no secrets unless they are passed down, even
-    # the ones of the environment its job uses. The Contabo secrets live
-    # only in the "e2e" environment, so nothing else is exposed by this.
-    secrets: inherit # zizmor: ignore[secrets-inherit]
 
   image:
     name: Build, sign and push to GHCR
@@ -256,6 +253,10 @@ jobs:
           # shellcheck disable=SC2086
           gh release create "$TAG" --repo "$REPO" --title "$TAG" --notes-file notes.md --generate-notes --verify-tag $prerelease
 
+  # Optional. Pushing images only needs a read/write token, but changing the
+  # Docker Hub page needs a token with more rights. Add one as the secret
+  # DOCKERHUB_DESCRIPTION_TOKEN of the "release" environment to keep the page
+  # in sync; without it this job is skipped with a notice.
   dockerhub-description:
     name: Docker Hub description
     needs: dockerhub
@@ -269,13 +270,26 @@ jobs:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
+      - name: Check for a description token
+        id: token
+        env:
+          TOKEN: ${{ secrets.DOCKERHUB_DESCRIPTION_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::DOCKERHUB_DESCRIPTION_TOKEN is not set, so the Docker Hub page was not updated"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.token.outputs.present == 'true'
         with:
           persist-credentials: false
       - uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0
+        if: steps.token.outputs.present == 'true'
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          password: ${{ secrets.DOCKERHUB_DESCRIPTION_TOKEN }}
           repository: hayone/external-dns-contabo-webhook
           short-description: ExternalDNS webhook for Contabo DNS. Makes Kubernetes keep your Contabo DNS records up to date.
           readme-filepath: ./docs/dockerhub.md
