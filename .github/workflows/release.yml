@@ -47,9 +47,11 @@ jobs:
     needs: test
     permissions:
       contents: read
-    # The e2e job reads its secrets from the "e2e" environment itself, so
-    # nothing has to be passed down.
     uses: ./.github/workflows/e2e.yml
+    # A called workflow sees no secrets unless they are passed down, even
+    # the ones of the environment its job uses. The Contabo secrets live
+    # only in the "e2e" environment, so nothing else is exposed by this.
+    secrets: inherit # zizmor: ignore[secrets-inherit]
 
   image:
     name: Build, sign and push to GHCR
