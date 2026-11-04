@@ -2,9 +2,13 @@
 
 The [Contabo OpenAPI spec](https://api.contabo.com/api-v1.yaml) does not
 tell you everything. These are the things we found by testing the real API,
-last checked on **2026-11-03**. The fake server in
+last checked on **2026-11-04**. The fake server in
 `internal/contabo/contabotest` copies all of them, so tests fail if the code
 forgets one.
+
+The same notes live in
+[cert-manager-webhook-contabo](https://github.com/hayone1/cert-manager-webhook-contabo/blob/main/docs/contabo-api.md).
+Keep both copies in sync.
 
 ## Login
 
@@ -48,6 +52,17 @@ default and waits for `ratelimit-reset` when it gets a 429.
 - A new zone already holds 3 `NS` records (`ns1/ns2/ns3.contabo.net`) and one `SOA`.
 - Their `prio`, `port`, `weight`, `flag` and `tag` fields are `null`.
 - A missing zone is HTTP 404: `Entry DNS Zone not found by zone name = ...`.
+- A new zone is not served at once. After the create (HTTP 201), ns1/ns2/ns3
+  answered `REFUSED` for the zone for about 3.5 minutes, then all three served
+  it (measured 2026-11-04). Records added after that appear within a second.
+- The SOA record looks like this. It cannot be changed through the API:
+
+  ```text
+  example.com. 3600 IN SOA ns1.contabo.net. hostmaster.contabo.de. <serial> 10800 3600 604800 3600
+  ```
+
+  The last field (3600 seconds) is how long resolvers may remember a
+  "no such name" answer.
 
 ## Record names
 
@@ -61,6 +76,9 @@ default and waits for `ratelimit-reset` when it gets a 429.
 - Names are case-insensitive in DNS, but the API keeps the case you sent.
 - `PATCH` rewrites the stored name to the full name (`www` becomes `www.example.com`).
 - `*` is only allowed as the first label (`*.apps` works, `x.*.apps` does not).
+- A full name that ends in the zone name twice (`x.example.com.example.com`)
+  is stored and served as exactly that name. A relative name that happens to
+  end in the zone name is taken as a full name.
 
 ## Record data
 
@@ -81,8 +99,14 @@ default and waits for `ratelimit-reset` when it gets a 429.
 
 ## Writing
 
-- **Create** an exact duplicate (same name, type and data): HTTP **409**
+- **Create** a duplicate (same name, type and data): HTTP **409**
   `Entry Record is not unique by name = ...`. The webhook treats this as success.
+  The check is smarter than "exact": a relative name, a full name, a full
+  name with a dot and an upper-case name all count as the same name, and
+  for TXT `abc` and `"abc"` count as the same data (checked 2026-11-04).
+- **Several values on one name:** two TXT records with the same name and
+  different values both exist and are both served. Deleting one by its
+  record ID leaves the other alone.
 - **Update** (`PATCH`) needs `type`, `ttl`, `prio` and `data` every time.
   It does not accept `name`.
 - **Update** of a record ID that does not exist: HTTP **500**, not 404.
@@ -103,3 +127,14 @@ The body has one of two shapes:
 {"statusCode": 400, "message": "Bad Request ..."}
 {"statusCode": 400, "message": ["ttl must be ...", "type must be ..."]}
 ```
+
+## Name server timing
+
+Measured 2026-11-04 by asking each of ns1/ns2/ns3 every second:
+
+- A change reaches all three name servers in **under a second**.
+- Each server caches its answers: "does not exist" for about **60 seconds**
+  (up to 150 seen), a real answer for about **20 seconds**.
+- So if a name is asked for just before its record is created, that server
+  can keep saying "no record" for a minute or two. Do not query a name
+  before you create it when you measure how fast changes show up.

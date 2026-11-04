@@ -320,3 +320,31 @@ func TestNetworkErrorIsTemporary(t *testing.T) {
 		t.Fatalf("connection refused should be temporary: %v", err)
 	}
 }
+
+// The real API ignores one pair of surrounding quotes when it looks for TXT
+// duplicates (checked 2026-11-04), so the fake must too.
+func TestFakeDuplicateTXT(t *testing.T) {
+	srv := contabotest.New()
+	defer srv.Close()
+	srv.AddZone("example.com")
+	c := newClient(t, srv)
+	ctx := context.Background()
+
+	steps := []struct {
+		name, data string
+		conflict   bool
+	}{
+		{"a", "abc", false},
+		{"a", `"abc"`, true},
+		{"b", `"abc"`, false},
+		{"b", "abc", true},
+		{"a", "other", false},
+		{"A.example.com.", "abc", true},
+	}
+	for _, s := range steps {
+		_, err := c.CreateRecord(ctx, "example.com", contabo.RecordRequest{Name: s.name, Type: "TXT", TTL: 60, Data: s.data})
+		if s.conflict != contabo.IsConflict(err) || (!s.conflict && err != nil) {
+			t.Errorf("create %s %s: conflict want %v, got err %v", s.name, s.data, s.conflict, err)
+		}
+	}
+}

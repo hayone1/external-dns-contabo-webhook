@@ -436,6 +436,24 @@ func fqdn(name *string, zone string) string {
 	}
 }
 
+// sameData reports whether two record values count as duplicates. For TXT
+// the real API ignores one pair of surrounding quotes: creating "abc" next
+// to abc is a 409 (checked 2026-11-04).
+func sameData(typ, a, b string) bool {
+	if typ == "TXT" {
+		return unquoteTXT(a) == unquoteTXT(b)
+	}
+	return a == b
+}
+
+func unquoteTXT(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		return s[1 : len(s)-1]
+	}
+	return s
+}
+
 func externalIP(typ, data string) bool {
 	ip, err := netip.ParseAddr(data)
 	if err != nil || (typ == "A") != ip.Is4() {
@@ -465,7 +483,7 @@ func (s *Server) checkData(zone, name string, b recordBody, skipID int64) (int, 
 		if rec.RecordID == skipID || fqdn(rec.Name, zone) != name {
 			continue
 		}
-		if rec.Type == b.Type && rec.Data == *b.Data {
+		if rec.Type == b.Type && sameData(b.Type, rec.Data, *b.Data) {
 			return http.StatusConflict, "Entry Record is not unique by name = " + name
 		}
 		if (b.Type == "CNAME") != (rec.Type == "CNAME") && rec.Type != "NS" && rec.Type != "SOA" {
