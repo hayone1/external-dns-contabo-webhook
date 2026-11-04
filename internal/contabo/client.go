@@ -274,7 +274,7 @@ func (c *Client) do(ctx context.Context, op, method, path string, query url.Valu
 			reason = strconv.Itoa(apiErr.StatusCode)
 		}
 		c.metrics.ObserveRetry(op, reason)
-		c.log.Debug("retrying Contabo API request", "operation", op, "attempt", attempt+1, "wait", wait, "error", err)
+		c.log.Debug("retrying Contabo API request", "operation", op, "attempt", attempt+1, "reason", reason, "wait", wait, "error", err)
 		if err := c.sleep(ctx, wait); err != nil {
 			return nil, err
 		}
