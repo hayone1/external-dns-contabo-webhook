@@ -82,10 +82,10 @@ The image has a few extra commands. They read the same environment variables.
 
 ```sh
 # Check the credentials and list the zones the webhook would manage
-docker run --rm --env-file .env ghcr.io/hayone1/external-dns-contabo-webhook:0.1.0 check
+docker run --rm --env-file .env ghcr.io/hayone1/external-dns-contabo-webhook:0.1.1 check
 
 # Print the version
-docker run --rm ghcr.io/hayone1/external-dns-contabo-webhook:0.1.0 version
+docker run --rm ghcr.io/hayone1/external-dns-contabo-webhook:0.1.1 version
 ```
 
 `healthcheck` is used by the image's Docker `HEALTHCHECK` and checks the local

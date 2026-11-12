@@ -13,7 +13,7 @@ provider:
   webhook:
     image:
       repository: ghcr.io/hayone1/external-dns-contabo-webhook # or docker.io/hayone/external-dns-contabo-webhook
-      tag: "0.1.0" # CHANGE ME: pin the version you tested (no "v")
+      tag: "0.1.1" # CHANGE ME: pin the version you tested (no "v")
     env:
       - name: CONTABO_CLIENT_ID
         valueFrom: { secretKeyRef: { name: contabo-credentials, key: client-id } }

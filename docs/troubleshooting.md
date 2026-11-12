@@ -15,7 +15,7 @@ You can also test your credentials on their own:
 ```sh
 docker run --rm \
   -e CONTABO_CLIENT_ID -e CONTABO_CLIENT_SECRET -e CONTABO_API_USER -e CONTABO_API_PASSWORD \
-  ghcr.io/hayone1/external-dns-contabo-webhook:0.1.0 check
+  ghcr.io/hayone1/external-dns-contabo-webhook:0.1.1 check
 ```
 
 It prints `login ok` and the list of zones.
